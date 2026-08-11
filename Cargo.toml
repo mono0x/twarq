@@ -1,6 +1,6 @@
 [package]
 name = "twarq"
-version = "0.1.0"
+version = "0.20260811.2"
 edition = "2024"
 
 [profile.release]
