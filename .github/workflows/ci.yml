@@ -20,6 +20,9 @@ jobs:
       - run: |
           rustup component add clippy
           rustup component add rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: |
           hk check --all
 
@@ -47,5 +50,9 @@ jobs:
           version: 2026.7.17
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: |
           cargo test --target ${{ matrix.target }}
