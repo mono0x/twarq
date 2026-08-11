@@ -8,6 +8,7 @@ local formatters = new Mapping<String, Step> {
   }
   ["pkl-format"] = Builtins.pkl_format
   ["cargo-fmt"] = Builtins.cargo_fmt
+  ["zizmor"] = Builtins.zizmor
 }
 
 local linters = (formatters) {

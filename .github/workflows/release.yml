@@ -2,9 +2,13 @@ name: Release
 on:
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -12,6 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - id: version
         run: |
           date=$(TZ=Asia/Tokyo date +%Y%m%d)
@@ -29,22 +34,29 @@ jobs:
       MISE_DISABLE_TOOLS: hk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
       - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
           version: 2026.7.17
       - name: Update version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          sed -i 's/^version = .*/version = "${{ needs.prepare.outputs.version }}"/' Cargo.toml
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
           cargo update --workspace
       - name: Commit version change
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock
-          git commit -m "Bump version to ${{ needs.prepare.outputs.version }}"
-          git tag ${{ needs.prepare.outputs.tag }}
+          git commit -m "Bump version to ${VERSION}"
+          git tag "${TAG}"
           git push origin main
-          git push origin ${{ needs.prepare.outputs.tag }}
+          git push origin "${TAG}"
 
   build:
     needs: [prepare, commit]
@@ -58,12 +70,15 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-15
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     env:
       MISE_DISABLE_TOOLS: hk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
       - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
           version: 2026.7.17
@@ -90,6 +105,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
       - name: Download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -97,8 +113,9 @@ jobs:
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release create ${{ needs.prepare.outputs.tag }} \
-            --title "${{ needs.prepare.outputs.tag }}" \
+          gh release create "${TAG}" \
+            --title "${TAG}" \
             --generate-notes \
             artifacts/*/*
