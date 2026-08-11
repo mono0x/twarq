@@ -2,22 +2,14 @@ amends "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Config.
 
 import "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Builtins.pkl"
 
-local formatters = new Mapping<String, Step> {
+local linters = new Mapping<String, Step> {
+  ["cargo-fmt"] = Builtins.cargo_fmt
   ["dprint"] = (Builtins.dprint) {
     glob = "**/*.{json,jsonc,md,yaml,yml,toml}"
   }
-  ["pkl-format"] = Builtins.pkl_format
-  ["cargo-fmt"] = Builtins.cargo_fmt
-  ["zizmor"] = Builtins.zizmor
-}
-
-local linters = (formatters) {
   ["pkl"] = Builtins.pkl
-  ["cargo-clippy"] = (Builtins.cargo_clippy) {
-    check = "cargo clippy --all-targets --all-features -- -D warnings"
-    fix =
-      "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings"
-  }
+  ["pkl-format"] = Builtins.pkl_format
+  ["zizmor"] = Builtins.zizmor
 }
 
 hooks {
@@ -28,7 +20,7 @@ hooks {
   }
   ["post-tool-use"] {
     fix = true
-    steps = formatters
+    steps = linters
   }
   ["fix"] {
     fix = true

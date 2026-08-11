@@ -9,6 +9,7 @@ project name is `twarq` even though the repository directory is `xarq`.
 
 - Rust version: pinned in `mise.toml` (`mise install` if missing).
 - Formatting and linting go through hk (`hk.pkl`): `hk fix` to format/fix, `hk check` to verify (both default to changed files, `--all` for everything).
+- clippy is deliberately not part of hk (it would force a full bundled-DuckDB build on every commit). Run `cargo clippy --all-targets --all-features -- -D warnings` yourself; CI runs it in the `test` job, which already has the build.
 - Test commands and the OS × target matrix: `.github/workflows/ci.yml` is the source of truth — mirror those locally rather than maintaining a duplicate list here.
 - Tests are colocated in `src/main.rs` under `mod tests`. Run a single test with `cargo test <fn_name>`. The first build compiles bundled DuckDB and takes several minutes.
 
