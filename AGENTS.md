@@ -9,7 +9,8 @@ project name is `twarq` even though the repository directory is `xarq`.
 
 - Rust version: pinned in `mise.toml` (`mise install` if missing).
 - Formatting and linting go through hk (`hk.pkl`): `hk fix` to format/fix, `hk check` to verify (both default to changed files, `--all` for everything).
-- clippy is deliberately not part of hk (it would force a full bundled-DuckDB build on every commit). Run `cargo clippy --all-targets --all-features -- -D warnings` yourself; CI runs it in the `test` job, which already has the build.
+- clippy is deliberately not part of hk (it would force a full bundled-DuckDB build on every commit). Run `cargo clippy --all-targets --all-features -- -D warnings` yourself; CI runs it in the `test` job.
+- DuckDB linkage is feature-gated: the default `bundled` feature compiles and statically links DuckDB (what releases ship). CI's `test` job instead sets `DUCKDB_DOWNLOAD_LIB=1` and builds with `--no-default-features`, dynamically linking the official prebuilt libduckdb to skip the multi-minute C++ build; the bundled configuration is only exercised by the release build.
 - Test commands and the OS × target matrix: `.github/workflows/ci.yml` is the source of truth — mirror those locally rather than maintaining a duplicate list here.
 - Tests are colocated in `src/main.rs` under `mod tests`. Run a single test with `cargo test <fn_name>`. The first build compiles bundled DuckDB and takes several minutes.
 
@@ -45,8 +46,9 @@ rather than being skipped.
 
 duckdb-rs cannot bind a Rust `Vec` to a `VARCHAR[]` column. The staging table
 stores entity lists as JSON-encoded VARCHAR and the INSERT ... SELECT converts
-with `from_json(col::JSON, '["VARCHAR"]')`. The `json` cargo feature of duckdb statically links the JSON extension
-this depends on.
+with `from_json(col::JSON, '["VARCHAR"]')`. This depends on the JSON
+extension: the `json` cargo feature statically links it in bundled builds, and
+the official prebuilt libduckdb (non-bundled CI builds) already includes it.
 
 ### created_at parsing avoids %z on purpose
 

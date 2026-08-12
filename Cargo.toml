@@ -7,10 +7,17 @@ edition = "2024"
 lto = true
 strip = "symbols"
 
+# Default builds statically link a bundled DuckDB (single-binary distribution).
+# Without default features, libduckdb-sys links a prebuilt libduckdb instead;
+# CI tests use this with DUCKDB_DOWNLOAD_LIB=1 to skip the C++ build.
+[features]
+default = ["bundled"]
+bundled = ["duckdb/bundled", "duckdb/json"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-duckdb = { version = "1.10505.0", features = ["bundled", "json"] }
+duckdb = { version = "1.10505.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }

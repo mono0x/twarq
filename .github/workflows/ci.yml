@@ -37,6 +37,9 @@ jobs:
       contents: read
     env:
       MISE_DISABLE_TOOLS: hk
+      # Link the prebuilt libduckdb instead of compiling bundled DuckDB.
+      # Release builds still use the default bundled feature.
+      DUCKDB_DOWNLOAD_LIB: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,6 +56,6 @@ jobs:
           key: ${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: |
-          cargo clippy --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
+          cargo clippy --all-targets --no-default-features --target ${{ matrix.target }} -- -D warnings
       - run: |
-          cargo test --target ${{ matrix.target }}
+          cargo test --no-default-features --target ${{ matrix.target }}
