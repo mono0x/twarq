@@ -83,6 +83,35 @@ DuckDB itself. Results are capped at `-n` rows (default 100, `0` disables).
 twarq schema
 ```
 
+### MCP server
+
+```sh
+twarq mcp --db archive.duckdb                        # stdio
+twarq mcp --db archive.duckdb --http 127.0.0.1:8080  # Streamable HTTP at /mcp
+```
+
+Runs an MCP server exposing `search_tweets`, `search_likes`, `query` and
+`schema` as tools, so MCP clients such as Claude Code can search the
+archive. The database is opened read-only.
+
+```json
+{
+  "mcpServers": {
+    "twarq": {
+      "command": "twarq",
+      "args": ["mcp", "--db", "/path/to/archive.duckdb"]
+    }
+  }
+}
+```
+
+With `--http` the same tools are served over Streamable HTTP at
+`http://<addr>/mcp` (`"url"` instead of `"command"` in the client config).
+The HTTP mode is stateless — no session handling — and only accepts
+requests whose `Host` header is a loopback address, which is what protects
+a locally running server from DNS rebinding. Put it behind a reverse proxy
+or a tunnel if you need to reach it from another machine.
+
 ## Database schema
 
 Terminology follows the archive format itself: an _account_ is an archive

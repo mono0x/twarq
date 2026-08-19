@@ -1,5 +1,6 @@
 mod cli;
 mod import;
+mod mcp;
 mod query;
 mod search;
 
@@ -12,8 +13,9 @@ use crate::cli::{Cli, Command};
 
 fn main() {
     let cli = Cli::parse();
-    let stdout = std::io::stdout();
-    if let Err(e) = run(cli, &mut stdout.lock()) {
+    // Not locked: the mcp command writes to stdout from tokio's blocking
+    // threads, which would deadlock against a lock held here.
+    if let Err(e) = run(cli, &mut std::io::stdout()) {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
     }
@@ -34,6 +36,10 @@ fn run(cli: Cli, out: &mut impl Write) -> Result<()> {
             let conn = query::open_read_only(&cli.db)?;
             query::run_query(&conn, out, format, &sql, &[], (limit > 0).then_some(limit))
         }
+        Command::Mcp { http } => match http {
+            Some(addr) => mcp::run_http(&cli.db, addr),
+            None => mcp::run_stdio(&cli.db),
+        },
         Command::Schema { format } => {
             let conn = query::open_read_only(&cli.db)?;
             query::print_schema(&conn, out, format)
@@ -365,6 +371,107 @@ mod tests {
             "table",
         ]);
         assert_eq!(output, "username\n--------\nalice\nbob\n");
+    }
+
+    #[test]
+    fn mcp_serves_tools() {
+        use rmcp::ServiceExt;
+        use rmcp::model::CallToolRequestParams;
+
+        let (_dir, db) = setup();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let conn = query::open_read_only(Path::new(&db)).unwrap();
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let server = tokio::spawn(async move {
+                let service = mcp::McpServer::new(conn).serve(server_io).await.unwrap();
+                service.waiting().await.unwrap();
+            });
+            let client = ().serve(client_io).await.unwrap();
+
+            let tools = client.list_tools(None).await.unwrap();
+            let mut names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
+            names.sort();
+            assert_eq!(names, ["query", "schema", "search_likes", "search_tweets"]);
+
+            let mut params = CallToolRequestParams::new("search_tweets");
+            params.arguments = serde_json::json!({"keywords": ["旅行"], "account": "alice"})
+                .as_object()
+                .cloned();
+            let result = client.call_tool(params).await.unwrap();
+            assert_ne!(result.is_error, Some(true));
+            let rows = jsonl(&result.content[0].as_text().unwrap().text);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["id"], "1001");
+
+            // Bad SQL must surface as a tool-level error the model can read,
+            // not as an opaque protocol error.
+            let mut params = CallToolRequestParams::new("query");
+            params.arguments = serde_json::json!({"sql": "SELECT nope"})
+                .as_object()
+                .cloned();
+            let result = client.call_tool(params).await.unwrap();
+            assert_eq!(result.is_error, Some(true));
+
+            client.cancel().await.unwrap();
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn mcp_serves_tools_over_http() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let (_dir, db) = setup();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let conn = query::open_read_only(Path::new(&db)).unwrap();
+            let router = mcp::http_router(mcp::McpServer::new(conn));
+
+            let post = async |body: serde_json::Value| {
+                let request = Request::post("/mcp")
+                    .header("host", "127.0.0.1")
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap();
+                let response = router.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), 200);
+                let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+            };
+
+            let response = post(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            }))
+            .await;
+            assert_eq!(response["result"]["serverInfo"]["name"], "twarq");
+
+            let response = post(serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {
+                    "name": "search_likes",
+                    "arguments": {"keywords": ["旅行"], "account": "bob"},
+                },
+            }))
+            .await;
+            let rows = jsonl(response["result"]["content"][0]["text"].as_str().unwrap());
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["tweet_id"], "2001");
+        });
     }
 
     #[test]

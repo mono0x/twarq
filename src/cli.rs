@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -52,6 +53,17 @@ pub enum Command {
 
         #[arg(short, long, value_enum, default_value_t = Format::Jsonl)]
         format: Format,
+    },
+
+    /// Run as an MCP server
+    ///
+    /// Exposes search, query and schema as MCP tools. Speaks stdio by
+    /// default, or Streamable HTTP at /mcp when --http is given. The database
+    /// is opened read-only, same as the query command.
+    Mcp {
+        /// Serve Streamable HTTP on this address instead of stdio
+        #[arg(long, value_name = "ADDR")]
+        http: Option<SocketAddr>,
     },
 
     /// Show the tables, columns and row counts available for querying
