@@ -21,7 +21,7 @@ pub fn run(conn: &Connection, out: &mut impl Write, args: &SearchArgs) -> Result
     }
 
     if args.likes {
-        return search_likes(conn, out, args, conditions, params);
+        return search_likes(conn, out, args, &conditions, &params);
     }
 
     if let Some(since) = &args.since {
@@ -74,8 +74,8 @@ fn search_likes(
     conn: &Connection,
     out: &mut impl Write,
     args: &SearchArgs,
-    conditions: Vec<String>,
-    params: Vec<String>,
+    conditions: &[String],
+    params: &[String],
 ) -> Result<()> {
     // Likes carry no timestamp in the archive; tweet IDs are snowflakes, so
     // sorting by their numeric value approximates recency.
@@ -85,11 +85,11 @@ fn search_likes(
          WHERE {}
          ORDER BY try_cast(l.tweet_id AS UBIGINT) {} NULLS LAST
          LIMIT {}",
-        where_clause(&conditions),
+        where_clause(conditions),
         if args.oldest_first { "ASC" } else { "DESC" },
         args.limit,
     );
-    run_query(conn, out, args.format, &sql, &params, None)
+    run_query(conn, out, args.format, &sql, params, None)
 }
 
 fn where_clause(conditions: &[String]) -> String {

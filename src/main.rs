@@ -48,6 +48,10 @@ fn run(cli: Cli, out: &mut impl Write) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "Test setup and assertions should fail immediately on errors."
+)]
 mod tests {
     use std::fs::File;
     use std::io::Write;

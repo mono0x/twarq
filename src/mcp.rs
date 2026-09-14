@@ -149,7 +149,10 @@ impl McpServer {
     /// result. Failures (e.g. bad SQL) become tool-level errors so the
     /// calling model sees the message instead of an opaque protocol error.
     fn call(&self, f: impl FnOnce(&Connection, &mut Vec<u8>) -> Result<()>) -> CallToolResult {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .expect("database connection mutex poisoned");
         let mut out = Vec::new();
         match f(&conn, &mut out) {
             Ok(()) => CallToolResult::success(vec![ContentBlock::text(

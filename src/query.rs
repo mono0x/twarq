@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::Path;
 
@@ -37,7 +38,7 @@ pub fn run_query(
     };
     let mut wrapped = format!("SELECT {projection} FROM ({sql}) t");
     if let Some(limit) = limit {
-        wrapped.push_str(&format!(" LIMIT {limit}"));
+        write!(wrapped, " LIMIT {limit}")?;
     }
 
     let mut stmt = conn.prepare(&wrapped)?;
