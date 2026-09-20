@@ -1,6 +1,6 @@
 [package]
 name = "twarq"
-version = "0.20260820.7"
+version = "0.20260920.20"
 edition = "2024"
 
 [lints.rust]
