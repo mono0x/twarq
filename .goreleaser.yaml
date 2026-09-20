@@ -1,0 +1,14 @@
+version: 2
+project_name: twarq
+
+# DuckDB is built natively in the workflow's OS matrix.
+builds:
+  - builder: rust
+    skip: true
+
+changelog:
+  use: github-native
+
+release:
+  extra_files:
+    - glob: target/artifacts/twarq-*
