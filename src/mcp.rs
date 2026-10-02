@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
@@ -237,8 +237,8 @@ impl McpServer {
 
 #[tool_handler]
 impl ServerHandler for McpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
