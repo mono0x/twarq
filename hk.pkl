@@ -1,6 +1,6 @@
-amends "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Config.pkl"
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
 
-import "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Builtins.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Builtins.pkl"
 
 local linters = new Mapping<String, Step> {
   ["cargo-fmt"] = Builtins.cargo_fmt
@@ -10,9 +10,11 @@ local linters = new Mapping<String, Step> {
   ["pkl"] = Builtins.pkl
   ["pkl-format"] = Builtins.pkl_format
   ["jactionlint"] {
-    glob = List(".github/workflows/*.{yml,yaml}", "**/action.{yml,yaml}")
+    glob = List(".github/workflows/*.yml", ".github/workflows/*.yaml", "**/action.{yml,yaml}")
     batch = true
-    check = "jactionlint {{files}}"
+    diagnostic_format = "sarif"
+    check = "jactionlint --format sarif {{files}}"
+    check_diff = "hk util sarif-diff -- jactionlint --format sarif {{files}}"
     fix = "jactionlint --fix {{files}}"
   }
 }
