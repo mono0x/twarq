@@ -5,9 +5,13 @@ on:
       - main
   pull_request:
 permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -23,6 +27,7 @@ jobs:
           hk check --all
 
   test:
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
