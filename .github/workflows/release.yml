@@ -10,6 +10,7 @@ permissions: {}
 
 jobs:
   release:
+    timeout-minutes: 120
     if: github.ref == 'refs/heads/main'
     # The Apple SDK is needed to cross-compile the macOS targets.
     runs-on: macos-latest
