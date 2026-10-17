@@ -215,8 +215,8 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
     let mut account: Option<Account> = None;
     for i in 0..zip.len() {
         let file = zip.by_index(i)?;
-        if base_name(file.name()) == "account.js" {
-            let name = file.name().to_string();
+        let name = file.name()?.into_owned();
+        if base_name(&name) == "account.js" {
             let mut accounts: Vec<AccountWrapper> = parse_data_file(file, &name)?;
             if let Some(wrapper) = accounts.drain(..).next() {
                 account = Some(wrapper.account);
@@ -250,7 +250,7 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
     let mut stats = Stats::default();
     for i in 0..zip.len() {
         let file = zip.by_index(i)?;
-        let name = file.name().to_string();
+        let name = file.name()?.into_owned();
         let base = base_name(&name).to_string();
         if is_data_file(&base, "tweets") {
             let tweets: Vec<TweetWrapper> = parse_data_file(file, &name)?;
