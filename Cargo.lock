@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "twarq"
-version = "0.20261011.29"
+version = "0.20261017.33"
 dependencies = [
  "anyhow",
  "axum",
