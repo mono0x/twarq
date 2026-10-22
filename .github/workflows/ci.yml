@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
-          version: 2026.8.14
+          version: 2026.10.17
       - run: |
           rustup component add rustfmt
       - run: |
@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
-          version: 2026.8.14
+          version: 2026.10.17
       - name: Set up Rust toolchain
         run: |
           rustup target add ${{ matrix.target }}
