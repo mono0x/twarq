@@ -2,8 +2,8 @@
 
 ## Overview / usage
 
-See `README.md`. The CLI surface is defined in `src/cli.rs` (clap derive). The
-project name is `twarq` even though the repository directory is `xarq`.
+See [README.md](README.md) for usage and documentation links. The CLI surface
+is defined in `src/cli.rs` (clap derive). The project name is `twarq`.
 
 ## Toolchain and commands
 

@@ -17,7 +17,15 @@ differences are multi-account support and likes.
 cargo install --git https://github.com/mono0x/twarq
 ```
 
-Or download a binary from the releases page.
+Or download a binary from the [releases page](https://github.com/mono0x/twarq/releases).
+
+## Documentation
+
+- [CLI usage](#usage): import archives, search tweets and likes, and run SQL.
+- [Database schema](docs/schema.md): tables, columns and primary keys.
+- [MCP setup](docs/mcp.md): connect a client over stdio or Streamable HTTP.
+- [Releasing](docs/releasing.md): publish a release and retry failed runs.
+- [Development notes](AGENTS.md): toolchain, checks and implementation constraints.
 
 ## Usage
 
@@ -47,7 +55,7 @@ twarq search 旅行 --format table             # for human reading
 
 Keywords are case-insensitive substring matches, so Japanese works as-is.
 
-Main options:
+Run `twarq search --help` for all options. Main options:
 
 - `--account`: only tweets/likes of this username
 - `--likes`: search likes; keywords match the liked tweet's text
@@ -60,6 +68,8 @@ Main options:
 - `-f`, `--format`: `jsonl` (default) / `json` / `table`
 
 ### SQL queries
+
+See the [database schema](docs/schema.md) for tables and columns.
 
 ```sh
 twarq query "SELECT text, created_at FROM tweets WHERE lang = 'ja'" -n 5
@@ -83,88 +93,7 @@ DuckDB itself. Results are capped at `-n` rows (default 100, `0` disables).
 twarq schema
 ```
 
-### MCP server
-
-```sh
-twarq mcp --db archive.duckdb                        # stdio
-twarq mcp --db archive.duckdb --http 127.0.0.1:8080  # Streamable HTTP at /mcp
-```
-
-Runs an MCP server exposing `search_tweets`, `search_likes`, `query` and
-`schema` as tools, so MCP clients such as Claude Code can search the
-archive. The database is opened read-only.
-
-```json
-{
-  "mcpServers": {
-    "twarq": {
-      "command": "twarq",
-      "args": ["mcp", "--db", "/path/to/archive.duckdb"]
-    }
-  }
-}
-```
-
-With `--http` the same tools are served over Streamable HTTP at
-`http://<addr>/mcp` (`"url"` instead of `"command"` in the client config).
-The HTTP mode is stateless — no session handling — and only accepts
-requests whose `Host` header is a loopback address, which is what protects
-a locally running server from DNS rebinding. Put it behind a reverse proxy
-or a tunnel if you need to reach it from another machine.
-
-## Database schema
-
-Terminology follows the archive format itself: an _account_ is an archive
-owner imported into the database (`data/account.js`), while _user_ refers to
-any Twitter user referenced only by ID, such as reply targets and followers.
-
-### accounts
-
-| column         | type    | description              |
-| -------------- | ------- | ------------------------ |
-| `account_id`   | VARCHAR | account ID (primary key) |
-| `username`     | VARCHAR | screen name              |
-| `display_name` | VARCHAR | display name             |
-
-### tweets
-
-Primary key is `(account_id, id)`.
-
-| column                    | type      | description                                                    |
-| ------------------------- | --------- | -------------------------------------------------------------- |
-| `account_id`              | VARCHAR   | owning account                                                 |
-| `id`                      | VARCHAR   | tweet ID                                                       |
-| `text`                    | TEXT      | tweet body; links stay as `t.co` short URLs                    |
-| `created_at`              | TIMESTAMP | creation time (UTC)                                            |
-| `retweet_count`           | INTEGER   |                                                                |
-| `favorite_count`          | INTEGER   |                                                                |
-| `source`                  | TEXT      | posting application (HTML anchor tag)                          |
-| `lang`                    | VARCHAR   | language code                                                  |
-| `deleted`                 | BOOLEAN   | true for tweets from `deleted-tweets.js`                       |
-| `in_reply_to_status_id`   | VARCHAR   |                                                                |
-| `in_reply_to_user_id`     | VARCHAR   |                                                                |
-| `in_reply_to_screen_name` | VARCHAR   |                                                                |
-| `urls`                    | VARCHAR[] | expanded URLs (not `t.co`)                                     |
-| `hashtags`                | VARCHAR[] | hashtags without `#`                                           |
-| `mentions`                | VARCHAR[] | mentioned screen names without `@`                             |
-| `media_urls`              | VARCHAR[] | image/video URLs                                               |
-| `media_types`             | VARCHAR[] | `photo` / `video` / `animated_gif`, same order as `media_urls` |
-
-### likes
-
-Primary key is `(account_id, tweet_id)`.
-
-| column       | type    | description                      |
-| ------------ | ------- | -------------------------------- |
-| `account_id` | VARCHAR | account that liked the tweet     |
-| `tweet_id`   | VARCHAR | liked tweet ID                   |
-| `text`       | TEXT    | liked tweet's text (may be NULL) |
-| `url`        | TEXT    | link to the tweet                |
-
-### followers / following
-
-Primary key is `(account_id, follower_id)` / `(account_id, following_id)`.
-The archive contains only user IDs and links, not screen names.
+Shows tables, columns and row counts for the selected database.
 
 ## Notes
 
@@ -180,21 +109,6 @@ The archive contains only user IDs and links, not screen names.
 - Deleted tweets share the `tweets` table with `deleted = true`. `search`
   excludes them by default, but in `query` you need `WHERE NOT deleted`
   explicitly.
-
-## Releasing
-
-Run the **Release** workflow on `main` after its CI run succeeds. No manual
-version update or tag creation is needed. The workflow uses
-`0.YYYYMMDD.<run_number>`, with the initial run date in Japan time, and pushes
-the version commit to `main` together with its tag atomically. The token must
-be allowed to push to `main` under the repository's branch rules.
-
-If CI has not succeeded, rerun after it completes. If `main` has advanced before
-the version commit is pushed, start a new workflow run for the latest commit.
-After the tag is pushed, rerunning the original run reuses that release commit
-and version. Artifacts remain in a draft until attestation succeeds; a retry
-can replace draft artifacts, while an already published release is left intact.
-Fixes to source or workflow code require a new run from the corrected `main`.
 
 ## License
 
