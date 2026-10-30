@@ -1,6 +1,11 @@
 version: 2
 project_name: twarq
 
+release:
+  draft: true
+  use_existing_draft: true
+  replace_existing_artifacts: true
+
 builds:
   - builder: rust
     targets:
