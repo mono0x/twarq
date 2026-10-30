@@ -1,0 +1,4 @@
+allow-branch = ["main"]
+publish = false
+push = false
+pre-release-commit-message = "Bump version to {{version}}"

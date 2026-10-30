@@ -9,45 +9,100 @@ concurrency:
 permissions: {}
 
 jobs:
-  release:
-    timeout-minutes: 120
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
-    # The Apple SDK is needed to cross-compile the macOS targets.
-    runs-on: macos-latest
     permissions:
       actions: read
       contents: write
-      id-token: write
-      attestations: write
     env:
       MISE_DISABLE_TOOLS: hk
-      PYTHONDONTWRITEBYTECODE: "1"
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           fetch-depth: 0
           persist-credentials: true
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           version: 2026.10.17
+          cache: false
       - name: Prepare release
         id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/prepare_release.py
+        run: |
+          date=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --jq '.created_at | fromdateiso8601 + 32400 | strftime("%Y%m%d")')
+          version="0.$date.$GITHUB_RUN_NUMBER"
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            test "$(git rev-parse "$tag^")" = "$GITHUB_SHA"
+            git merge-base --is-ancestor "$tag" origin/main
+            exit 0
+          fi
+          if test "$(git rev-parse HEAD)" != "$GITHUB_SHA"; then
+            echo 'main has advanced; start a new release workflow' >&2
+            exit 1
+          fi
+          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=1" \
+            --jq '.workflow_runs[0].conclusion')
+          if test "$conclusion" != success; then
+            echo 'The latest push CI run for this commit must succeed first' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          cargo release "$version" --execute --no-confirm
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$tag"
+
+  publish:
+    needs: prepare
+    timeout-minutes: 120
+    # The Apple SDK is needed to cross-compile the macOS targets.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      MISE_DISABLE_TOOLS: hk
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .draft | not')
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        if: steps.release.outputs.published != 'true'
+        with:
+          version: 2026.10.17
+          cache: false
       - name: Build draft release
-        if: steps.prepare.outputs.published != 'true'
+        if: steps.release.outputs.published != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CARGO_BUILD_JOBS: "3"
         run: goreleaser release --clean --parallelism 1
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: steps.prepare.outputs.published != 'true'
+        if: steps.release.outputs.published != 'true'
         with:
           subject-checksums: dist/checksums.txt
       - name: Publish release
-        if: steps.prepare.outputs.published != 'true'
+        if: steps.release.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
         run: gh release edit "$RELEASE_TAG" --draft=false
