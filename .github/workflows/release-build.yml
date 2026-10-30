@@ -1,0 +1,52 @@
+name: Release build
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  build:
+    # The Apple SDK is needed to cross-compile the macOS targets.
+    runs-on: macos-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      MISE_DISABLE_TOOLS: hk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          version: 2026.10.17
+          cache: false
+      - name: Build release archives
+        env:
+          CARGO_BUILD_JOBS: "3"
+        run: goreleaser release --clean --parallelism 1 --skip=publish,announce
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+      - name: Collect release artifacts
+        run: |
+          mkdir release
+          cp dist/checksums.txt release/
+          while read -r _ file; do
+            cp "dist/$file" release/
+          done < dist/checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ inputs.tag }}
+          path: release/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7

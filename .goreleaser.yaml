@@ -1,11 +1,6 @@
 version: 2
 project_name: twarq
 
-release:
-  draft: true
-  use_existing_draft: true
-  replace_existing_artifacts: true
-
 builds:
   - builder: rust
     targets:
@@ -17,7 +12,7 @@ builds:
       - --locked
 
 changelog:
-  use: github-native
+  disable: true
 
 checksum:
   name_template: checksums.txt
