@@ -89,26 +89,26 @@ url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/ca
 url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272875"
 
 [[tools.goreleaser]]
-version = "2.18.2"
+version = "2.18.3"
 backend = "aqua:goreleaser/goreleaser"
-specifiers = ["2.18.2"]
+specifiers = ["2.18.3"]
 
 [tools.goreleaser."platforms.linux-x64"]
-checksum = "sha256:0a96edc9d9bc594e4a41cc4d59467c182062910ab24d9d1f6dd7b667d32606d3"
-url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.2/goreleaser_Linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/569382334"
+checksum = "sha256:b8dee4728bca1aba0d71a832a17cd0a3799f75372878e7ffa36aef2343bce0bc"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.3/goreleaser_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/623773318"
 provenance = "github-attestations"
 
 [tools.goreleaser."platforms.macos-arm64"]
-checksum = "sha256:4bfd26942aa0f78e275cad3e49144a7c5ce2e8a34f7d0e9d34c718125766ba12"
-url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.2/goreleaser_Darwin_all.tar.gz"
-url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/569382437"
+checksum = "sha256:156f425536d40ce282b79c637ca00eb943792de6ad1e2482a4b21cc4b5421f4f"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.3/goreleaser_Darwin_all.tar.gz"
+url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/623773494"
 provenance = "github-attestations"
 
 [tools.goreleaser."platforms.macos-x64"]
-checksum = "sha256:4bfd26942aa0f78e275cad3e49144a7c5ce2e8a34f7d0e9d34c718125766ba12"
-url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.2/goreleaser_Darwin_all.tar.gz"
-url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/569382437"
+checksum = "sha256:156f425536d40ce282b79c637ca00eb943792de6ad1e2482a4b21cc4b5421f4f"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.18.3/goreleaser_Darwin_all.tar.gz"
+url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/623773494"
 provenance = "github-attestations"
 
 [[tools.hk]]
