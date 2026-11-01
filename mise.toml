@@ -1,5 +1,5 @@
 [tools]
-dprint = "0.56.1"
+dprint = "0.63.0"
 goreleaser = "2.18.3"
 "github:jdx/jactionlint" = "2.2.0"
 "github:crate-ci/cargo-release" = "1.1.7"
