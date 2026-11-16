@@ -17,4 +17,8 @@ steps {
     check_diff = "hk util sarif-diff -- jactionlint --format sarif {{files}}"
     fix = "jactionlint --fix {{files}}"
   }
+  ["secretlint"] {
+    glob = "**/*"
+    check = "mise exec -- secretlint --no-glob {{ files }}"
+  }
 }

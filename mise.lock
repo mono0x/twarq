@@ -91,6 +91,29 @@ checksum = "sha256:79463de3b10811fcebe91a3771f9658a2e40178eb6de66a2d379d12fe5317
 url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-apple-darwin.tar.xz"
 url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272875"
 
+[[tools."github:secretlint/secretlint"]]
+version = "14.0.0"
+backend = "github:secretlint/secretlint"
+specifiers = ["14.0.0"]
+
+[tools."github:secretlint/secretlint"."platforms.linux-x64"]
+checksum = "sha256:93402a624c0af025552a9df12f00fd746adc11eb6c9a70679c58c72082889856"
+url = "https://github.com/secretlint/secretlint/releases/download/v14.0.0/secretlint-14.0.0-linux-x64"
+url_api = "https://api.github.com/repos/secretlint/secretlint/releases/assets/750155478"
+provenance = "github-attestations"
+
+[tools."github:secretlint/secretlint"."platforms.macos-arm64"]
+checksum = "sha256:916af26411e4dd1c08baf7f85dd7cec8b98c6a4881653c986f5d4f03987bccfe"
+url = "https://github.com/secretlint/secretlint/releases/download/v14.0.0/secretlint-14.0.0-darwin-arm64"
+url_api = "https://api.github.com/repos/secretlint/secretlint/releases/assets/750155482"
+provenance = "github-attestations"
+
+[tools."github:secretlint/secretlint"."platforms.macos-x64"]
+checksum = "sha256:2114a75847fc8235987ef4c135759a290b4b637185be146eba760cc62e4d8614"
+url = "https://github.com/secretlint/secretlint/releases/download/v14.0.0/secretlint-14.0.0-darwin-x64"
+url_api = "https://api.github.com/repos/secretlint/secretlint/releases/assets/750155493"
+provenance = "github-attestations"
+
 [[tools.goreleaser]]
 version = "2.18.3"
 backend = "aqua:goreleaser/goreleaser"
