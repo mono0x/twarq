@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use zip::ZipArchive;
+use zip::read::{ArchiveOffset, Config};
 
 // No full-text index is built here on purpose. SQLite's FTS5 default
 // tokenizer splits on whitespace and punctuation, so Japanese text — which has
@@ -213,22 +215,32 @@ fn parse_data_file<T: DeserializeOwned>(mut file: impl Read, name: &str) -> Resu
 }
 
 fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
-    let mut zip = ZipArchive::new(BufReader::new(File::open(path)?))?;
+    // X archives start at offset 0. The default ArchiveOffset::Detect scans a
+    // ZIP64 archive (over 4 GB, which media makes common) from the start for
+    // the EOCD64 signature, reading the whole file.
+    let config = Config {
+        archive_offset: ArchiveOffset::Known(0),
+    };
+    let mut zip = ZipArchive::with_config(config, BufReader::new(File::open(path)?))?;
+
+    // Entry names come from the central directory, which ZipArchive::with_config
+    // has already read. by_index additionally reads the entry's local header, a
+    // seek into the archive per call; archives hold thousands of media files
+    // and can be several GB on slow disks, so only data files are opened.
+    let names: Vec<String> = zip
+        .file_names()
+        .map(|name| name.map(Cow::into_owned))
+        .collect::<Result<_, _>>()?;
 
     // The account has to be known before any other row can be inserted, but
-    // ZIP entry order is arbitrary, so account.js is located in a first pass.
-    let mut account: Option<Account> = None;
-    for i in 0..zip.len() {
-        let file = zip.by_index(i)?;
-        let name = file.name()?.into_owned();
-        if base_name(&name) == "account.js" {
-            let mut accounts: Vec<AccountWrapper> = parse_data_file(file, &name)?;
-            if let Some(wrapper) = accounts.drain(..).next() {
-                account = Some(wrapper.account);
-            }
-            break;
-        }
-    }
+    // ZIP entry order is arbitrary, so account.js is located first.
+    let account = match names.iter().position(|n| base_name(n) == "account.js") {
+        Some(i) => parse_data_file::<AccountWrapper>(zip.by_index(i)?, &names[i])?
+            .into_iter()
+            .next()
+            .map(|wrapper| wrapper.account),
+        None => None,
+    };
     let Some(account) = account else {
         bail!("no account.js found; not an X archive?");
     };
@@ -251,24 +263,22 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
     )?;
 
     let mut stats = Stats::default();
-    for i in 0..zip.len() {
-        let file = zip.by_index(i)?;
-        let name = file.name()?.into_owned();
-        let base = base_name(&name).to_string();
-        if is_data_file(&base, "tweets") {
-            let tweets: Vec<TweetWrapper> = parse_data_file(file, &name)?;
+    for (i, name) in names.iter().enumerate() {
+        let base = base_name(name);
+        if is_data_file(base, "tweets") {
+            let tweets: Vec<TweetWrapper> = parse_data_file(zip.by_index(i)?, name)?;
             import_tweets(&tx, &account, &tweets, false, verbose, &mut stats)?;
             log(verbose, &format!("{name}: {} tweets", tweets.len()));
-        } else if is_data_file(&base, "deleted-tweets") {
-            let tweets: Vec<TweetWrapper> = parse_data_file(file, &name)?;
+        } else if is_data_file(base, "deleted-tweets") {
+            let tweets: Vec<TweetWrapper> = parse_data_file(zip.by_index(i)?, name)?;
             import_tweets(&tx, &account, &tweets, true, verbose, &mut stats)?;
             log(verbose, &format!("{name}: {} deleted tweets", tweets.len()));
-        } else if is_data_file(&base, "like") {
-            let likes: Vec<LikeWrapper> = parse_data_file(file, &name)?;
+        } else if is_data_file(base, "like") {
+            let likes: Vec<LikeWrapper> = parse_data_file(zip.by_index(i)?, name)?;
             import_likes(&tx, &account, &likes, &mut stats)?;
             log(verbose, &format!("{name}: {} likes", likes.len()));
-        } else if is_data_file(&base, "follower") {
-            let followers: Vec<FollowerWrapper> = parse_data_file(file, &name)?;
+        } else if is_data_file(base, "follower") {
+            let followers: Vec<FollowerWrapper> = parse_data_file(zip.by_index(i)?, name)?;
             import_follows(
                 &tx,
                 &account,
@@ -278,8 +288,8 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
             )?;
             stats.followers += followers.len();
             log(verbose, &format!("{name}: {} followers", followers.len()));
-        } else if is_data_file(&base, "following") {
-            let following: Vec<FollowingWrapper> = parse_data_file(file, &name)?;
+        } else if is_data_file(base, "following") {
+            let following: Vec<FollowingWrapper> = parse_data_file(zip.by_index(i)?, name)?;
             import_follows(
                 &tx,
                 &account,
