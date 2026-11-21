@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
-#[command(version, about = "Import and search X (Twitter) archives with DuckDB")]
+#[command(version, about = "Import and search X (Twitter) archives with SQLite")]
 pub struct Cli {
-    /// DuckDB file path
-    #[arg(short, long, global = true, default_value = "twarq.duckdb")]
+    /// SQLite database file path
+    #[arg(short, long, global = true, default_value = "twarq.db")]
     pub db: PathBuf,
 
     #[command(subcommand)]
@@ -16,7 +16,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Import X archive ZIP files into DuckDB
+    /// Import X archive ZIP files into SQLite
     ///
     /// Each archive is keyed by the account it belongs to (data/account.js),
     /// so archives from multiple accounts can be imported into the same
@@ -41,7 +41,7 @@ pub enum Command {
     /// Run a read-only SQL query
     ///
     /// The database is opened read-only, so statements that would modify it
-    /// are rejected by DuckDB itself. Results are capped at --limit rows.
+    /// are rejected by SQLite itself. Results are capped at --limit rows.
     /// Run `twarq schema` first to see the available tables and columns.
     Query {
         /// SQL to run (SELECT form)

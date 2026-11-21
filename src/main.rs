@@ -24,7 +24,7 @@ fn main() {
 fn run(cli: Cli, out: &mut impl Write) -> Result<()> {
     match cli.command {
         Command::Import { archives, verbose } => {
-            let conn = duckdb::Connection::open(&cli.db)
+            let conn = rusqlite::Connection::open(&cli.db)
                 .with_context(|| format!("failed to open {}", cli.db.display()))?;
             import::import_archives(&conn, &archives, verbose)
         }
@@ -159,7 +159,7 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("test.duckdb").to_str().unwrap().to_string();
+        let db = dir.path().join("test.db").to_str().unwrap().to_string();
         let alice = alice_archive(dir.path());
         let bob = bob_archive(dir.path());
         run_cli(&[
@@ -221,6 +221,18 @@ mod tests {
         ]));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["id"], "1002");
+
+        let rows = jsonl(&run_cli(&[
+            "twarq",
+            "search",
+            "--db",
+            &db,
+            "--mentions",
+            "@carol",
+        ]));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "1002");
+        assert_eq!(rows[0]["deleted"], false);
 
         let rows = jsonl(&run_cli(&["twarq", "search", "--db", &db, "--has-media"]));
         assert_eq!(rows.len(), 1);
@@ -291,6 +303,38 @@ mod tests {
     }
 
     #[test]
+    fn query_expands_json_lists() {
+        let (_dir, db) = setup();
+
+        let sql = "SELECT j.value AS tag, count(*) AS n
+                   FROM tweets t, json_each(t.hashtags) j GROUP BY tag";
+        let rows = jsonl(&run_cli(&["twarq", "query", "--db", &db, sql]));
+        assert_eq!(rows, [serde_json::json!({"tag": "travel", "n": 1})]);
+    }
+
+    #[test]
+    fn query_rejects_writes() {
+        let (_dir, db) = setup();
+
+        for sql in [
+            "DELETE FROM tweets",
+            "SELECT 1; DELETE FROM tweets",
+            "CREATE TABLE x (a)",
+        ] {
+            let cli = Cli::try_parse_from(["twarq", "query", "--db", &db, sql]).unwrap();
+            assert!(run(cli, &mut Vec::new()).is_err(), "accepted: {sql}");
+        }
+        let rows = jsonl(&run_cli(&[
+            "twarq",
+            "query",
+            "--db",
+            &db,
+            "SELECT count(*) AS n FROM tweets",
+        ]));
+        assert_eq!(rows[0]["n"], 4);
+    }
+
+    #[test]
     fn reimport_adds_no_duplicates() {
         let (dir, db) = setup();
 
@@ -318,10 +362,10 @@ mod tests {
     #[test]
     fn import_skips_malformed_rows_within_transaction() {
         // The whole archive imports in one transaction; a row whose
-        // created_at fails strptime must be skipped without poisoning the
-        // transaction or losing the rows around it.
+        // created_at cannot be parsed must be skipped without losing the rows
+        // around it.
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("test.duckdb").to_str().unwrap().to_string();
+        let db = dir.path().join("test.db").to_str().unwrap().to_string();
         let tweets = format!(
             "window.YTD.tweets.part0 = [ {}, {} ]",
             tweet_js("1201", "壊れた日付", "Mon Sep 24 03:35:21 +0900 2018", ""),

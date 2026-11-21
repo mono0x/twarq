@@ -1,9 +1,9 @@
 # twarq
 
-Import X (Twitter) archives into DuckDB and search them from the command line.
+Import X (Twitter) archives into SQLite and search them from the command line.
 
 `twarq` extracts tweets, deleted tweets, likes, followers and following from
-X archive ZIP files (the 2025+ format) into a single DuckDB database. Archives
+X archive ZIP files (the 2025+ format) into a single SQLite database. Archives
 from multiple accounts can be imported into the same database and searched
 across. Output is JSON Lines by default, intended for consumption by AI agents
 (Claude Code etc.) as well as humans.
@@ -33,14 +33,14 @@ Or download a binary from the [releases page](https://github.com/mono0x/twarq/re
 
 ```sh
 twarq import twitter-archive.zip
-twarq import alice.zip bob.zip --db archive.duckdb   # multiple accounts
+twarq import alice.zip bob.zip --db archive.db   # multiple accounts
 twarq import archive.zip --verbose                   # per-file progress
 ```
 
 Each archive is keyed by the account it belongs to (`data/account.js`), so
 archives from different accounts coexist in one database. Re-importing the
 same archive adds no duplicates. Split data files (`tweets-part1.js` etc.) are
-picked up automatically. The default database path is `twarq.duckdb`.
+picked up automatically. The default database path is `twarq.db`.
 
 ### Search
 
@@ -69,23 +69,24 @@ Run `twarq search --help` for all options. Main options:
 
 ### SQL queries
 
-See the [database schema](docs/schema.md) for tables and columns.
+Queries use SQLite syntax. See the [database schema](docs/schema.md) for
+tables and columns.
 
 ```sh
 twarq query "SELECT text, created_at FROM tweets WHERE lang = 'ja'" -n 5
 
 # Tweets per year per account (use -n 0 to lift the automatic cap)
-twarq query "SELECT a.username, year(t.created_at) y, count(*) n
+twarq query "SELECT a.username, strftime('%Y', t.created_at) y, count(*) n
              FROM tweets t JOIN accounts a USING (account_id)
-             GROUP BY ALL ORDER BY 1, 2" -n 0 -f table
+             GROUP BY 1, 2 ORDER BY 1, 2" -n 0 -f table
 
-# Most-used hashtags (unnest expands array columns)
-twarq query "SELECT tag, count(*) n FROM (SELECT unnest(hashtags) tag FROM tweets)
+# Most-used hashtags (json_each expands list columns)
+twarq query "SELECT j.value tag, count(*) n FROM tweets t, json_each(t.hashtags) j
              GROUP BY tag ORDER BY n DESC" -n 10
 ```
 
 The database is opened read-only, so `DELETE` and `DROP` are rejected by
-DuckDB itself. Results are capped at `-n` rows (default 100, `0` disables).
+SQLite itself. Results are capped at `-n` rows (default 100, `0` disables).
 
 ### Schema
 
@@ -97,9 +98,9 @@ Shows tables, columns and row counts for the selected database.
 
 ## Notes
 
-- **No full-text index.** DuckDB's `fts` extension tokenizes on whitespace, so
-  Japanese text collapses into one token per tweet. At archive scale a
-  substring scan takes milliseconds, so `search` uses `ILIKE`.
+- **No full-text index.** SQLite's FTS5 tokenizes on whitespace, so Japanese
+  text collapses into one token per sentence. At archive scale a substring
+  scan takes milliseconds, so `search` uses `LIKE`.
 - **Retweets are stored with the body starting `RT @user:`.** Use
   `--no-retweets` or `text NOT LIKE 'RT @%'` to filter them.
 - **Archives contain only your own tweets.** Replies from others are not
