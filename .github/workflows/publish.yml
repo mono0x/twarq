@@ -42,7 +42,7 @@ jobs:
           draft=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .draft')
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@v8.0.2
         if: steps.release.outputs.draft != 'false'
         with:
           name: release-${{ github.ref_name }}
