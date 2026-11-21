@@ -1,9 +1,10 @@
-use std::fmt::Write as _;
 use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use duckdb::{AccessMode, Config, Connection, params_from_iter};
+use rusqlite::types::ValueRef;
+use rusqlite::{Connection, OpenFlags, params_from_iter};
+use serde_json::{Map, Value};
 
 use crate::cli::Format;
 
@@ -11,18 +12,18 @@ use crate::cli::Format;
 /// reader; opening read-only means a malformed or hostile query cannot modify
 /// the archive, and it allows concurrent readers.
 pub fn open_read_only(path: &Path) -> Result<Connection> {
-    let config = Config::default().access_mode(AccessMode::ReadOnly)?;
-    Connection::open_with_flags(path, config)
-        .with_context(|| format!("failed to open {}", path.display()))
+    Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("failed to open {}", path.display()))
 }
 
 /// Executes `sql` and writes the rows to `out` in the requested format.
 ///
-/// The statement is wrapped in an outer query that makes DuckDB itself do the
-/// serialization: `to_json` for jsonl/json (which handles lists, timestamps
-/// and NULLs correctly), and a `COLUMNS(*)::VARCHAR` cast for table output.
-/// `limit`, when given, caps the result on the outer query so an unbounded
-/// SELECT cannot flood the caller (typically an LLM's context window).
+/// `limit`, when given, caps the result so an unbounded SELECT cannot flood
+/// the caller (typically an LLM's context window). SQLite steps rows lazily,
+/// so stopping early also stops the scan.
 pub fn run_query(
     conn: &Connection,
     out: &mut impl Write,
@@ -31,55 +32,86 @@ pub fn run_query(
     params: &[String],
     limit: Option<usize>,
 ) -> Result<()> {
-    let sql = sql.trim().trim_end_matches(';');
-    let projection = match format {
-        Format::Jsonl | Format::Json => "to_json(t)::VARCHAR",
-        Format::Table => "COLUMNS(*)::VARCHAR",
-    };
-    let mut wrapped = format!("SELECT {projection} FROM ({sql}) t");
-    if let Some(limit) = limit {
-        write!(wrapped, " LIMIT {limit}")?;
-    }
-
-    let mut stmt = conn.prepare(&wrapped)?;
+    let mut stmt = conn.prepare(sql)?;
+    let columns: Vec<(String, Option<String>)> = stmt
+        .columns()
+        .map(|c| (c.name().to_string(), c.decl_type().map(str::to_uppercase)))
+        .collect();
     let mut rows = stmt.query(params_from_iter(params))?;
+
+    let mut records: Vec<Vec<Value>> = Vec::new();
+    while let Some(row) = rows.next()? {
+        if limit.is_some_and(|limit| records.len() >= limit) {
+            break;
+        }
+        let record = columns
+            .iter()
+            .enumerate()
+            .map(|(i, (_, decl_type))| Ok(to_json(row.get_ref(i)?, decl_type.as_deref())))
+            .collect::<Result<Vec<_>>>()?;
+        records.push(record);
+    }
 
     match format {
         Format::Jsonl => {
-            while let Some(row) = rows.next()? {
-                let json: String = row.get(0)?;
-                writeln!(out, "{json}")?;
+            for record in records {
+                writeln!(out, "{}", Value::Object(to_object(&columns, record)))?;
             }
         }
         Format::Json => {
-            let mut records = Vec::new();
-            while let Some(row) = rows.next()? {
-                let json: String = row.get(0)?;
-                records.push(serde_json::from_str::<serde_json::Value>(&json)?);
-            }
-            serde_json::to_writer_pretty(&mut *out, &records)?;
+            let objects: Vec<Value> = records
+                .into_iter()
+                .map(|record| Value::Object(to_object(&columns, record)))
+                .collect();
+            serde_json::to_writer_pretty(&mut *out, &objects)?;
             writeln!(out)?;
         }
         Format::Table => {
-            let columns = rows
-                .as_ref()
-                .expect("statement is live while rows are read")
-                .column_names();
-            let mut cells: Vec<Vec<String>> = Vec::new();
-            while let Some(row) = rows.next()? {
-                let record = (0..columns.len())
-                    .map(|i| {
-                        let value: Option<String> = row.get(i)?;
-                        // Newlines would break the row alignment.
-                        Ok(value.unwrap_or_default().replace('\n', " "))
-                    })
-                    .collect::<duckdb::Result<Vec<_>>>()?;
-                cells.push(record);
-            }
-            write_table(out, &columns, &cells)?;
+            let names: Vec<String> = columns.into_iter().map(|(name, _)| name).collect();
+            let cells: Vec<Vec<String>> = records
+                .iter()
+                .map(|record| record.iter().map(to_cell).collect())
+                .collect();
+            write_table(out, &names, &cells)?;
         }
     }
     Ok(())
+}
+
+/// Converts a SQLite value to JSON. SQLite has no list or boolean types, so
+/// the column's declared type decides: `JSON` columns (entity lists stored as
+/// JSON text) are embedded as JSON, and `BOOLEAN` columns become true/false.
+/// The declared type survives subqueries and joins but not expressions, so a
+/// computed column falls back to its storage class.
+fn to_json(value: ValueRef<'_>, decl_type: Option<&str>) -> Value {
+    match (value, decl_type) {
+        (ValueRef::Null, _) => Value::Null,
+        (ValueRef::Integer(n), Some("BOOLEAN")) => Value::Bool(n != 0),
+        (ValueRef::Integer(n), _) => n.into(),
+        (ValueRef::Real(f), _) => f.into(),
+        (ValueRef::Text(text), Some("JSON")) => serde_json::from_slice(text)
+            .unwrap_or_else(|_| String::from_utf8_lossy(text).into_owned().into()),
+        (ValueRef::Text(text) | ValueRef::Blob(text), _) => {
+            String::from_utf8_lossy(text).into_owned().into()
+        }
+    }
+}
+
+fn to_object(columns: &[(String, Option<String>)], record: Vec<Value>) -> Map<String, Value> {
+    columns
+        .iter()
+        .map(|(name, _)| name.clone())
+        .zip(record)
+        .collect()
+}
+
+fn to_cell(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        // Newlines would break the row alignment.
+        Value::String(s) => s.replace('\n', " "),
+        other => other.to_string(),
+    }
 }
 
 fn write_table(out: &mut impl Write, columns: &[String], cells: &[Vec<String>]) -> Result<()> {
@@ -118,10 +150,10 @@ fn write_table(out: &mut impl Write, columns: &[String], cells: &[Vec<String>]) 
 
 pub fn print_schema(conn: &Connection, out: &mut impl Write, format: Format) -> Result<()> {
     const COLUMNS: &str = "
-        SELECT table_name, column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'main'
-        ORDER BY table_name, ordinal_position";
+        SELECT m.name AS table_name, p.name AS column_name, p.type AS data_type
+        FROM sqlite_schema m JOIN pragma_table_info(m.name) p
+        WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+        ORDER BY m.name, p.cid";
     run_query(conn, out, format, COLUMNS, &[], None)?;
 
     const COUNTS: &str = "

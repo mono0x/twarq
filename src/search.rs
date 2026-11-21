@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use anyhow::Result;
-use duckdb::Connection;
+use rusqlite::Connection;
 
 use crate::cli::SearchArgs;
 use crate::query::run_query;
@@ -12,7 +12,9 @@ pub fn run(conn: &Connection, out: &mut impl Write, args: &SearchArgs) -> Result
 
     let text_column = if args.likes { "l.text" } else { "t.text" };
     for keyword in &args.keywords {
-        conditions.push(format!("{text_column} ILIKE '%' || ? || '%'"));
+        // LIKE is case-insensitive for ASCII only, which is enough here:
+        // Japanese has no case.
+        conditions.push(format!("{text_column} LIKE '%' || ? || '%'"));
         params.push(keyword.clone());
     }
     if let Some(account) = &args.account {
@@ -25,16 +27,16 @@ pub fn run(conn: &Connection, out: &mut impl Write, args: &SearchArgs) -> Result
     }
 
     if let Some(since) = &args.since {
-        conditions.push("t.created_at >= ?::TIMESTAMP".into());
+        conditions.push("t.created_at >= datetime(?)".into());
         params.push(since.clone());
     }
     if let Some(until) = &args.until {
         // Inclusive of the whole end day when a bare date is given.
-        conditions.push("t.created_at < ?::TIMESTAMP + INTERVAL 1 DAY".into());
+        conditions.push("t.created_at < datetime(?, '+1 day')".into());
         params.push(until.clone());
     }
     if let Some(mentions) = &args.mentions {
-        conditions.push("list_contains(t.mentions, ?)".into());
+        conditions.push("EXISTS (SELECT 1 FROM json_each(t.mentions) WHERE value = ?)".into());
         params.push(mentions.trim_start_matches('@').to_string());
     }
     if let Some(reply_to) = &args.reply_to {
@@ -42,10 +44,10 @@ pub fn run(conn: &Connection, out: &mut impl Write, args: &SearchArgs) -> Result
         params.push(reply_to.trim_start_matches('@').to_string());
     }
     if args.has_media {
-        conditions.push("len(t.media_urls) > 0".into());
+        conditions.push("json_array_length(t.media_urls) > 0".into());
     }
     if args.has_url {
-        conditions.push("len(t.urls) > 0".into());
+        conditions.push("json_array_length(t.urls) > 0".into());
     }
     if args.no_retweets {
         conditions.push("t.text NOT LIKE 'RT @%'".into());
@@ -83,7 +85,7 @@ fn search_likes(
         "SELECT l.tweet_id, a.username, l.text, l.url
          FROM likes l JOIN accounts a USING (account_id)
          WHERE {}
-         ORDER BY try_cast(l.tweet_id AS UBIGINT) {} NULLS LAST
+         ORDER BY CAST(l.tweet_id AS INTEGER) {}
          LIMIT {}",
         where_clause(conditions),
         if args.oldest_first { "ASC" } else { "DESC" },

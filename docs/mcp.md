@@ -9,7 +9,7 @@ archive. The database is opened read-only.
 ## Connect over stdio
 
 ```sh
-twarq mcp --db archive.duckdb
+twarq mcp --db archive.db
 ```
 
 Configure the client to start `twarq` over stdio:
@@ -19,7 +19,7 @@ Configure the client to start `twarq` over stdio:
   "mcpServers": {
     "twarq": {
       "command": "twarq",
-      "args": ["mcp", "--db", "/path/to/archive.duckdb"]
+      "args": ["mcp", "--db", "/path/to/archive.db"]
     }
   }
 }
@@ -28,7 +28,7 @@ Configure the client to start `twarq` over stdio:
 ## Connect over Streamable HTTP
 
 ```sh
-twarq mcp --db archive.duckdb --http 127.0.0.1:8080
+twarq mcp --db archive.db --http 127.0.0.1:8080
 ```
 
 With `--http` the same tools are served over Streamable HTTP at

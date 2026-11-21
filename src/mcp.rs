@@ -3,12 +3,12 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use duckdb::Connection;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
+use rusqlite::Connection;
 use serde::Deserialize;
 
 use crate::cli::{Format, SearchArgs};
@@ -70,7 +70,7 @@ pub fn http_router(server: McpServer) -> axum::Router {
 
 #[derive(Clone)]
 pub struct McpServer {
-    // ServerHandler requires Sync and duckdb::Connection is not. One shared
+    // ServerHandler requires Sync and rusqlite::Connection is not. One shared
     // read-only connection behind a Mutex serializes tool calls, which at
     // archive scale (milliseconds per query) costs nothing even over HTTP.
     conn: Arc<Mutex<Connection>>,
@@ -211,7 +211,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Run a read-only SQL query (DuckDB syntax) against the archive database. Call schema first to see the available tables and columns. Returns one JSON object per line."
+        description = "Run a read-only SQL query (SQLite syntax; list columns are JSON arrays, use json_each to expand them) against the archive database. Call schema first to see the available tables and columns. Returns one JSON object per line."
     )]
     fn query(&self, Parameters(p): Parameters<QueryParams>) -> CallToolResult {
         let limit = p.limit.unwrap_or(100);
@@ -244,7 +244,7 @@ impl ServerHandler for McpServer {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Searches X (Twitter) archives imported into a local DuckDB database. \
+                "Searches X (Twitter) archives imported into a local SQLite database. \
              The database is opened read-only. Use search_tweets or search_likes \
              for keyword search; for anything else, call schema to see the tables \
              (accounts, tweets, likes, followers, following) and run SQL with query.",

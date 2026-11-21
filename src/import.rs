@@ -3,58 +3,63 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use duckdb::{Connection, params};
+use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use zip::ZipArchive;
 
-// No full-text index is built here on purpose. DuckDB's fts extension
-// tokenizes on whitespace and punctuation, so Japanese text — which has no
-// word spacing — collapses into a single token per tweet and never matches a
-// term query. At archive scale a substring scan is a few milliseconds, so
-// `search` uses ILIKE instead, which works in every language.
+// No full-text index is built here on purpose. SQLite's FTS5 default
+// tokenizer splits on whitespace and punctuation, so Japanese text — which has
+// no word spacing — collapses into a single token per sentence and never
+// matches a term query. At archive scale a substring scan is a few
+// milliseconds, so `search` uses LIKE instead, which works in every language.
+//
+// SQLite has no list or boolean types. Entity lists are stored as JSON text
+// in columns declared `JSON`, and flags as 0/1 in columns declared `BOOLEAN`;
+// `query::to_json` relies on these declared types to emit real JSON arrays
+// and booleans.
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS accounts (
-        account_id VARCHAR PRIMARY KEY,
-        username VARCHAR,
-        display_name VARCHAR
+        account_id TEXT PRIMARY KEY,
+        username TEXT,
+        display_name TEXT
     );
     CREATE TABLE IF NOT EXISTS tweets (
-        account_id VARCHAR,
-        id VARCHAR,
+        account_id TEXT,
+        id TEXT,
         text TEXT,
-        created_at TIMESTAMP,
+        created_at TEXT,
         retweet_count INTEGER,
         favorite_count INTEGER,
         source TEXT,
-        lang VARCHAR,
+        lang TEXT,
         deleted BOOLEAN,
-        in_reply_to_status_id VARCHAR,
-        in_reply_to_user_id VARCHAR,
-        in_reply_to_screen_name VARCHAR,
-        urls VARCHAR[],
-        hashtags VARCHAR[],
-        mentions VARCHAR[],
-        media_urls VARCHAR[],
-        media_types VARCHAR[],
+        in_reply_to_status_id TEXT,
+        in_reply_to_user_id TEXT,
+        in_reply_to_screen_name TEXT,
+        urls JSON,
+        hashtags JSON,
+        mentions JSON,
+        media_urls JSON,
+        media_types JSON,
         PRIMARY KEY (account_id, id)
     );
     CREATE TABLE IF NOT EXISTS likes (
-        account_id VARCHAR,
-        tweet_id VARCHAR,
+        account_id TEXT,
+        tweet_id TEXT,
         text TEXT,
         url TEXT,
         PRIMARY KEY (account_id, tweet_id)
     );
     CREATE TABLE IF NOT EXISTS followers (
-        account_id VARCHAR,
-        follower_id VARCHAR,
+        account_id TEXT,
+        follower_id TEXT,
         user_link TEXT,
         PRIMARY KEY (account_id, follower_id)
     );
     CREATE TABLE IF NOT EXISTS following (
-        account_id VARCHAR,
-        following_id VARCHAR,
+        account_id TEXT,
+        following_id TEXT,
         user_link TEXT,
         PRIMARY KEY (account_id, following_id)
     );";
@@ -229,11 +234,9 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
     };
 
     // One transaction per archive: without it every INSERT auto-commits and
-    // fsyncs the WAL, which makes a full archive take hours instead of
-    // seconds. A statement error poisons a DuckDB transaction (later
-    // statements fail, COMMIT silently discards everything), so the inserts
-    // below are written to never error on malformed rows — see import_tweets.
-    // Rolls back on drop if an error propagates.
+    // syncs the journal, which makes a full archive take minutes instead of
+    // seconds. Rolls back on drop if an error propagates, so an archive is
+    // imported entirely or not at all.
     let tx = conn.unchecked_transaction()?;
 
     // OR REPLACE rather than OR IGNORE: a newer archive of the same account
@@ -271,7 +274,7 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
                 &account,
                 followers.iter().map(|w| &w.follower),
                 "INSERT OR IGNORE INTO followers (account_id, follower_id, user_link)
-                 SELECT ?, follow_id, user_link FROM staged_follows",
+                 VALUES (?, ?, ?)",
             )?;
             stats.followers += followers.len();
             log(verbose, &format!("{name}: {} followers", followers.len()));
@@ -282,7 +285,7 @@ fn import_archive(conn: &Connection, path: &Path, verbose: bool) -> Result<()> {
                 &account,
                 following.iter().map(|w| &w.following),
                 "INSERT OR IGNORE INTO following (account_id, following_id, user_link)
-                 SELECT ?, follow_id, user_link FROM staged_follows",
+                 VALUES (?, ?, ?)",
             )?;
             stats.following += following.len();
             log(verbose, &format!("{name}: {} following", following.len()));
@@ -324,11 +327,34 @@ fn log(verbose: bool, message: &str) {
     }
 }
 
-/// Renders a slice as a JSON array destined for a VARCHAR[] column. The
-/// driver cannot bind a Rust Vec directly, so lists are staged as JSON text
-/// and converted with `from_json(col::JSON, '[\"VARCHAR\"]')` on insert.
-fn json_list(values: &[&str]) -> String {
-    serde_json::to_string(values).expect("string slices always serialize")
+/// Converts the archive's `created_at` (e.g. `Mon Sep 24 03:35:21 +0000 2018`)
+/// to `2018-09-24 03:35:21`, the form SQLite's date functions understand and
+/// that sorts chronologically as text. Archive timestamps are always UTC, so
+/// any other offset is rejected rather than converted.
+fn parse_created_at(value: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let [_, month, day, time, "+0000", year] = value.split(' ').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let month = MONTHS.iter().position(|&m| m == month)? + 1;
+    let day: u8 = day.parse().ok().filter(|d| (1..=31).contains(d))?;
+    let year: u16 = year.parse().ok().filter(|y| (1000..=9999).contains(y))?;
+    let [hour, minute, second] = time.split(':').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let hour: u8 = hour.parse().ok().filter(|h| *h < 24)?;
+    let minute: u8 = minute.parse().ok().filter(|m| *m < 60)?;
+    let second: u8 = second.parse().ok().filter(|s| *s < 61)?;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}"
+    ))
+}
+
+fn json_list<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
+    serde_json::to_string(&values.into_iter().collect::<Vec<_>>())
+        .expect("string slices always serialize")
 }
 
 fn import_tweets(
@@ -339,116 +365,60 @@ fn import_tweets(
     verbose: bool,
     stats: &mut Stats,
 ) -> Result<()> {
-    // Rows go through a staging table via the appender rather than through a
-    // per-row INSERT: executing a statement per tweet is what made imports
-    // take hours, while appending and then converting the whole batch in one
-    // vectorized INSERT ... SELECT takes seconds.
-    conn.execute_batch(
-        "CREATE OR REPLACE TEMP TABLE staged_tweets (
-            id VARCHAR,
-            text VARCHAR,
-            created_at VARCHAR,
-            retweet_count BIGINT,
-            favorite_count BIGINT,
-            source VARCHAR,
-            lang VARCHAR,
-            in_reply_to_status_id VARCHAR,
-            in_reply_to_user_id VARCHAR,
-            in_reply_to_screen_name VARCHAR,
-            urls VARCHAR,
-            hashtags VARCHAR,
-            mentions VARCHAR,
-            media_urls VARCHAR,
-            media_types VARCHAR)",
-    )?;
-    let mut appender = conn.appender_to_catalog_and_db("staged_tweets", "temp", "main")?;
-    for wrapper in tweets {
-        let tweet = &wrapper.tweet;
-        let urls: Vec<&str> = tweet
-            .entities
-            .urls
-            .iter()
-            .filter(|u| !u.expanded_url.is_empty())
-            .map(|u| u.expanded_url.as_str())
-            .collect();
-        let hashtags: Vec<&str> = tweet
-            .entities
-            .hashtags
-            .iter()
-            .map(|h| h.text.as_str())
-            .collect();
-        let mentions: Vec<&str> = tweet
-            .entities
-            .user_mentions
-            .iter()
-            .map(|m| m.screen_name.as_str())
-            .collect();
-        let media = &tweet.extended_entities.media;
-        let media_urls: Vec<&str> = media.iter().map(|m| m.media_url_https.as_str()).collect();
-        let media_types: Vec<&str> = media.iter().map(|m| m.media_type.as_str()).collect();
-
-        appender.append_row(params![
-            tweet.id_str,
-            tweet.full_text,
-            tweet.created_at,
-            tweet.retweet_count.parse::<i64>().unwrap_or(0),
-            tweet.favorite_count.parse::<i64>().unwrap_or(0),
-            tweet.source,
-            tweet.lang,
-            tweet.in_reply_to_status_id_str,
-            tweet.in_reply_to_user_id_str,
-            tweet.in_reply_to_screen_name,
-            json_list(&urls),
-            json_list(&hashtags),
-            json_list(&mentions),
-            json_list(&media_urls),
-            json_list(&media_types),
-        ])?;
-    }
-    appender.flush()?;
-    drop(appender);
-
-    // try_strptime instead of strptime, filtered by the WHERE clause: a
-    // statement error inside the archive's transaction poisons it in DuckDB —
-    // every later statement fails and the commit silently drops everything —
-    // so a bad created_at must drop the row without raising an error. The
-    // offset is matched literally rather than with %z: archive timestamps are
-    // always +0000, and %z would make strptime return TIMESTAMPTZ, whose cast
-    // to TIMESTAMP needs the icu extension (not statically linked) and the
-    // session timezone.
-    conn.execute(
+    let mut insert = conn.prepare(
         "INSERT OR IGNORE INTO tweets
            (account_id, id, text, created_at, retweet_count, favorite_count,
             source, lang, deleted, in_reply_to_status_id, in_reply_to_user_id,
             in_reply_to_screen_name, urls, hashtags, mentions, media_urls, media_types)
-         SELECT ?, id, text, try_strptime(created_at, '%a %b %d %H:%M:%S +0000 %Y'),
-                retweet_count, favorite_count, source, lang, ?,
-                in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name,
-                from_json(urls::JSON, '[\"VARCHAR\"]'), from_json(hashtags::JSON, '[\"VARCHAR\"]'),
-                from_json(mentions::JSON, '[\"VARCHAR\"]'), from_json(media_urls::JSON, '[\"VARCHAR\"]'),
-                from_json(media_types::JSON, '[\"VARCHAR\"]')
-         FROM staged_tweets
-         WHERE try_strptime(created_at, '%a %b %d %H:%M:%S +0000 %Y') IS NOT NULL",
-        params![account.account_id, deleted],
-    )?;
-
-    let mut skipped_rows = conn.prepare(
-        "SELECT id, created_at FROM staged_tweets
-         WHERE try_strptime(created_at, '%a %b %d %H:%M:%S +0000 %Y') IS NULL",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )?;
     let mut skipped = 0usize;
-    for row in skipped_rows.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })? {
-        let (id, created_at) = row?;
-        log(
-            verbose,
-            &format!("skipping tweet {id}: unparseable created_at {created_at:?}"),
-        );
-        skipped += 1;
+    for wrapper in tweets {
+        let tweet = &wrapper.tweet;
+        let Some(created_at) = parse_created_at(&tweet.created_at) else {
+            log(
+                verbose,
+                &format!(
+                    "skipping tweet {}: unparseable created_at {:?}",
+                    tweet.id_str, tweet.created_at
+                ),
+            );
+            skipped += 1;
+            continue;
+        };
+        let entities = &tweet.entities;
+        let media = &tweet.extended_entities.media;
+        insert.execute(params![
+            account.account_id,
+            tweet.id_str,
+            tweet.full_text,
+            created_at,
+            tweet.retweet_count.parse::<i64>().unwrap_or(0),
+            tweet.favorite_count.parse::<i64>().unwrap_or(0),
+            tweet.source,
+            tweet.lang,
+            deleted,
+            tweet.in_reply_to_status_id_str,
+            tweet.in_reply_to_user_id_str,
+            tweet.in_reply_to_screen_name,
+            json_list(
+                entities
+                    .urls
+                    .iter()
+                    .map(|u| u.expanded_url.as_str())
+                    .filter(|u| !u.is_empty())
+            ),
+            json_list(entities.hashtags.iter().map(|h| h.text.as_str())),
+            json_list(
+                entities
+                    .user_mentions
+                    .iter()
+                    .map(|m| m.screen_name.as_str())
+            ),
+            json_list(media.iter().map(|m| m.media_url_https.as_str())),
+            json_list(media.iter().map(|m| m.media_type.as_str())),
+        ])?;
     }
-    drop(skipped_rows);
-    conn.execute_batch("DROP TABLE staged_tweets")?;
 
     stats.skipped += skipped;
     if deleted {
@@ -465,22 +435,18 @@ fn import_likes(
     likes: &[LikeWrapper],
     stats: &mut Stats,
 ) -> Result<()> {
-    conn.execute_batch(
-        "CREATE OR REPLACE TEMP TABLE staged_likes (tweet_id VARCHAR, text VARCHAR, url VARCHAR)",
+    let mut insert = conn.prepare(
+        "INSERT OR IGNORE INTO likes (account_id, tweet_id, text, url) VALUES (?, ?, ?, ?)",
     )?;
-    let mut appender = conn.appender_to_catalog_and_db("staged_likes", "temp", "main")?;
     for wrapper in likes {
         let like = &wrapper.like;
-        appender.append_row(params![like.tweet_id, like.full_text, like.expanded_url])?;
+        insert.execute(params![
+            account.account_id,
+            like.tweet_id,
+            like.full_text,
+            like.expanded_url
+        ])?;
     }
-    appender.flush()?;
-    drop(appender);
-    conn.execute(
-        "INSERT OR IGNORE INTO likes (account_id, tweet_id, text, url)
-         SELECT ?, tweet_id, text, url FROM staged_likes",
-        params![account.account_id],
-    )?;
-    conn.execute_batch("DROP TABLE staged_likes")?;
     stats.likes += likes.len();
     Ok(())
 }
@@ -492,16 +458,13 @@ fn import_follows<'a>(
     follows: impl IntoIterator<Item = &'a Follow>,
     insert_sql: &str,
 ) -> Result<()> {
-    conn.execute_batch(
-        "CREATE OR REPLACE TEMP TABLE staged_follows (follow_id VARCHAR, user_link VARCHAR)",
-    )?;
-    let mut appender = conn.appender_to_catalog_and_db("staged_follows", "temp", "main")?;
+    let mut insert = conn.prepare(insert_sql)?;
     for follow in follows {
-        appender.append_row(params![follow.account_id, follow.user_link])?;
+        insert.execute(params![
+            account.account_id,
+            follow.account_id,
+            follow.user_link
+        ])?;
     }
-    appender.flush()?;
-    drop(appender);
-    conn.execute(insert_sql, params![account.account_id])?;
-    conn.execute_batch("DROP TABLE staged_follows")?;
     Ok(())
 }
