@@ -72,6 +72,11 @@ pub fn import_archives(conn: &Connection, archives: &[PathBuf], verbose: bool) -
         import_archive(conn, path, verbose)
             .with_context(|| format!("failed to import {}", path.display()))?;
     }
+    // Build after loading so a fresh import does not maintain indexes per row.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS tweets_created_at ON tweets (created_at);
+         CREATE INDEX IF NOT EXISTS tweets_account_created_at ON tweets (account_id, created_at);",
+    )?;
     Ok(())
 }
 
